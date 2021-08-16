@@ -75,7 +75,7 @@ export default Vue.extend({
           this.$router.push(this.$route.query.redirect as string || '/')
         }
       } catch (error) {
-        console.log('登录失败', error)
+        this.$message.success('登录失败')
       }
       this.isLoginLoading = false
     }
