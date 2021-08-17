@@ -8,15 +8,6 @@ const request = axios.create({
   // 配置选项
 })
 
-function redirectLogin () {
-  router.push({
-    name: 'login',
-    query: {
-      redirect: router.currentRoute.fullPath
-    }
-  })
-}
-
 // 请求拦截器
 request.interceptors.request.use(function (config) {
   const { user } = store.state
@@ -29,6 +20,8 @@ request.interceptors.request.use(function (config) {
 })
 
 // 响应拦截器
+let isRefreshing = false // token 刷新状态
+let requests: any[] = [] // 存储刷新 token 期间过来的 401 请求
 request.interceptors.response.use(function (response) { // 状态码为 2xx 执行这里
   return response
 }, async function (error) { // 状态码超出 2xx 执行这里
@@ -42,24 +35,35 @@ request.interceptors.response.use(function (response) { // 状态码为 2xx 执�
         redirectLogin()
         return Promise.reject(error)
       }
-
       // 尝试获取新的 token
-      try {
-        const { data } = await axios.create()({
-          method: 'POST',
-          url: '/front/user/refresh_token',
-          data: qs.stringify({
-            refreshtoken: store.state.user.refresh_token
+      if (!isRefreshing) {
+        isRefreshing = true // 开启刷新状态
+        return refreshToken().then(res => {
+          if (!res.data.success) {
+            throw new Error('刷新 token 失败！')
+          }
+          // 获取成功，更新 token
+          store.commit('setUser', res.data.content)
+          // 执行 requests 存储的请求
+          requests.forEach(cb => cb())
+          requests = []
+          // 重发本次失败的请求
+          return request(error.config)
+        }).catch(err => {
+          console.log(err)
+          // 获取失败，跳转到登录页
+          store.commit('setUser', null)
+          redirectLogin()
+          return Promise.reject(error)
+        }).finally(() => {
+          isRefreshing = false // 重置刷新状态
+        })
+      } else {
+        return new Promise(resolve => {
+          requests.push(() => {
+            resolve(request(error.config))
           })
         })
-        // 获取成功，更新 token
-        store.commit('setUser', data.content)
-        // 重发本次失败的请求
-        return request(error.config)
-      } catch (error) {
-        // 获取失败，跳转到登录页
-        redirectLogin()
-        return Promise.reject(error)
       }
     } else if (status === 403) {
       Message.error('没有权限，请联系管理员')
@@ -73,9 +77,29 @@ request.interceptors.response.use(function (response) { // 状态码为 2xx 执�
   } else { // 设置请求时，触发了一个错误
     Message.error(`请求失败：${error.message}`)
   }
-
   // 继续抛出错误对象，扔给上一个调用者
   return Promise.reject(error)
 })
+
+// 获取新的 token
+function refreshToken () {
+  return axios.create()({
+    method: 'POST',
+    url: '/front/user/refresh_token',
+    data: qs.stringify({
+      refreshtoken: store.state.user.refresh_token
+    })
+  })
+}
+
+// 重定向到登录页
+function redirectLogin () {
+  router.push({
+    name: 'login',
+    query: {
+      redirect: router.currentRoute.fullPath
+    }
+  })
+}
 
 export default request
